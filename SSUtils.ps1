@@ -18,7 +18,11 @@ discord.gg/cVwShsZkqp (selenium)
 
 "@ -ForegroundColor Blue
 
-function Test-Admin {;$currentUser = New-Object Security.Principal.WindowsPrincipal $([Security.Principal.WindowsIdentity]::GetCurrent());$currentUser.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator);}
+function Test-Admin {
+    $currentUser = New-Object Security.Principal.WindowsPrincipal $([Security.Principal.WindowsIdentity]::GetCurrent()) 
+    $currentUser.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
+}
+
 if (!(Test-Admin)) {
     Write-Warning "Please Run This Script as Admin."
 	Pause
@@ -30,9 +34,9 @@ Clear-Host
 
 $global:Is64BitOperatingSystem = [System.Environment]::Is64BitOperatingSystem
 
-function CreateLibsDir {
+function New-LibsDir {
     if (-Not(Test-Path -Path libs)) {
-        New-Item -Name "libs" -ItemType "directory"
+        New-Item -Name "libs" -ItemType "directory" > $null
     }
 }
 
@@ -179,108 +183,107 @@ function Get-FileFromWeb { # Credits: https://gist.github.com/ChrisStro/37444dd0
     }
 }
 
-function Everything {
-    CreateLibsDir
+function Invoke-DownloadSearchEverything {
     if (-Not(Test-Path -Path libs/Everything.exe)) {
-        if ($global:Is64BitOperatingSystem) {
-            Invoke-WebRequest "https://www.voidtools.com/Everything-1.4.1.1026.x64-Setup.exe" -OutFile libs/Everything.exe
-        } else {
-            Invoke-WebRequest "https://www.voidtools.com/Everything-1.4.1.1026.x86-Setup.exe" -OutFile libs/Everything.exe
-        }
+        New-LibsDir
+
+        $url = if ($global:Is64BitOperatingSystem) {"https://www.voidtools.com/Everything-1.4.1.1026.x64-Setup.exe"} else {"https://www.voidtools.com/Everything-1.4.1.1026.x86-Setup.exe"}
+        Get-FileFromWeb -URL $url -File "libs/Everything.exe"
     }
-    .\libs\Everything.exe
+    & .\libs\Everything.exe
 }
 
-function DownloadEverythingCLI {
-    CreateLibsDir
+function Invoke-DownloadSearchEverythingCLI {
     if (-Not(Test-Path -Path libs/ES)) {
-        if ($global:Is64BitOperatingSystem) {
-            Invoke-WebRequest "https://www.voidtools.com/ES-1.1.0.27.x64.zip" -OutFile libs/ES.zip
-        } else {
-            Invoke-WebRequest "https://www.voidtools.com/ES-1.1.0.27.x86.zip" -OutFile libs/ES.zip
-        }
-        Expand-Archive -DestinationPath "libs/ES" -Path "libs/ES.Zip"
-        Remove-Item -Path "libs/ES.zip"
+        New-LibsDir
+
+        $url = if ($global:Is64BitOperatingSystem) {"https://www.voidtools.com/ES-1.1.0.27.x64.zip"} else {"https://www.voidtools.com/ES-1.1.0.27.x86.zip"}
+        Get-FileFromWeb -URL $url -File "libs/ES.Zip"
+        Expand-Archive -DestinationPath "libs/ES" -Path "libs/ES.Zip" > $null
+        Remove-Item -Path "libs/ES.zip" > $null
     }
 }
 
 $global:7zPath = ""
-function Find7Zip {
-    DownloadEverythingCLI
-    $global:7zPath = .\libs\ES\es.exe "Program Files\7-Zip\7z.exe"
+function Get-7Zip {
     if ($global:7zPath.Length -eq 0) {
-        throw [System.IO.FileNotFoundException]::new("Couldn't find 7zip installed")
+        Invoke-DownloadSearchEverythingCLI
+
+        $global:7zPath = .\libs\ES\es.exe "Program Files\7-Zip\7z.exe"
+        if ($global:7zPath.Length -eq 0) {
+            Invoke-Download7Zip
+            Get-7Zip
+        }
+        $global:7zPath = $global:7zPath.Split("`r`n")[0]
     }
-    $global:7zPath = $global:7zPath.Split("`r`n")[0]
 }
 
-$global:githubToken = ""
-$global:githubTokenAsked = $false
-function Get-GithubToken {
-    if ($global:githubTokenAsked) {
+$global:GitHubToken = ""
+$global:GitHubTokenAsked = $false
+function Get-GitHubToken {
+    if ($global:GitHubTokenAsked) {
         Return
     }
-    $global:githubToken = Read-Host "Please enter your github token"
-    $global:githubTokenAsked = $true
+    $global:GitHubToken = Read-Host "Please enter your GitHub token"
+    $global:GitHubTokenAsked = $true
     Clear-Host
 }
 
-function Get-GithubAPI-Headers {
-    if ($global:githubToken.Length -eq 0) {
+function Get-GitHubAPIHeaders {
+    if ($global:GitHubToken.Length -eq 0) {
         return @{}
     } else {
-        return @{"Authorization"= "Bearer $global:githubToken"}
+        return @{
+            "Authorization"= "Bearer $global:GitHubToken"
+        }
     }
 }
 
-function Download7Zip {
-    try {
-        Find7Zip
-    } catch [System.IO.FileNotFoundException] {
+function Invoke-Download7Zip {
+    if (-Not(Test-Path -Path libs/7z.exe)) {
+        New-LibsDir
+        Get-GitHubToken
+        
         Write-Host "Installing 7zip..."
-        if (-Not(Test-Path -Path libs/7z.exe)) {
-            CreateLibsDir
-            Get-GithubToken
-            $url = "https://api.github.com/repos/ip7z/7zip/releases/latest"
-            $resp = Invoke-WebRequest $url -Headers $(Get-GithubAPI-Headers)
-            if ($resp.StatusCode -ne 200) {
-                Write-Host "Status code $($resp.StatusCode)"
-                Pause
-                Return
-            }
-            $content = $resp.Content | ConvertFrom-Json
-            $regex = if ($global:Is64BitOperatingSystem) {"7z\d+-x64\.exe"} else {"7z\d+\.exe"}
-            foreach ($asset in $content.assets) {
-                if ($asset.name -imatch $regex) {
-                    Invoke-WebRequest $asset.browser_download_url -OutFile libs/7z.exe
-                    break
-                }
+        $url = "https://api.github.com/repos/ip7z/7zip/releases/latest"
+        $resp = Invoke-WebRequest $url -Headers $(Get-GitHubAPIHeaders)
+        if ($resp.StatusCode -ne 200) {
+            Write-Host "Status code $($resp.StatusCode)"
+            Pause
+            Return
+        }
+        $content = $resp.Content | ConvertFrom-Json
+        $regex = if ($global:Is64BitOperatingSystem) {"7z\d+-x64\.exe"} else {"7z\d+\.exe"}
+        foreach ($asset in $content.assets) {
+            if ($asset.name -imatch $regex) {
+                Get-FileFromWeb -URL $asset.browser_download_url -File "libs/7z.exe"
+                break
             }
         }
-        .\libs\7z.exe
-        Write-Host "After installing, Press enter..."
-        Pause
-        Clear-Host
-        Find7Zip
     }
+    & .\libs\7z.exe > $null
+    Write-Host "After installing, Press enter..."
+    Pause
+    Clear-Host
+    Find-7Zip
 }
 
-function SystemUpTime {
-    $os = Get-WmiObject Win32_OperatingSystem
+function Get-SystemUpTime {
+    $os = Get-CimInstance -ClassName Win32_OperatingSystem
     Return (Get-Date).Subtract($os.ConvertToDateTime($os.LastBootUpTime))
 }
 
-function TimeSpanToString {
+function Format-Timespan {
     Param (
         $timespan
     )
     Return "$($timespan.Days):$($timespan.Hours):$($timespan.Minutes):$($timespan.Seconds)"
 }
 
-function CheckAlts {
-    Download7Zip
-    DownloadEverythingCLI
-    $mcDirs = .\libs\ES\es.exe folder:regex:^\.minecraft$
+function Invoke-AltCheck {
+    Get-7Zip
+    Invoke-DownloadSearchEverythingCLI
+    $mcDirs = & .\libs\ES\es.exe folder:regex:^\.minecraft$
     $totalData = 0
     $logFiles = @()
     $usercacheFiles = @()
@@ -395,24 +398,26 @@ function CheckAlts {
     $results | Out-GridView -PassThru -Title 'Results'
 }
 
-function WinPrefetchView {
-    CreateLibsDir
-    Download7Zip
+function Invoke-DownloadWinPrefetchView {
     if (-Not(Test-Path -Path libs/wpv)) {
+        New-LibsDir
+        Get-7Zip
+
         $url = if ($global:Is64BitOperatingSystem) {"https://www.nirsoft.net/utils/winprefetchview-x64.zip"} else {"https://www.nirsoft.net/utils/winprefetchview.zip"}
-        Invoke-WebRequest $url -OutFile libs/wpv.zip
+        Get-FileFromWeb -URL $url -File "libs/wpv.zip"
         & $global:7zPath e -olibs/wpv libs/wpv.zip > $null
-        Remove-Item -Path "libs/wpv.zip"
+        Remove-Item -Path "libs/wpv.zip" > $null
     }
     & .\libs\wpv\WinPrefetchView.exe
 }
 
-function SystemInformer {
-    CreateLibsDir
+function Invoke-DownloadSystemInformer {
     if (-Not(Test-Path -Path libs/systeminformer.exe)) {
-        Get-GithubToken
+        New-LibsDir
+        Get-GitHubToken
+
         $url = "https://api.github.com/repos/winsiderss/si-builds/releases/latest"
-        $resp = Invoke-WebRequest -Uri $url -Headers $(Get-GithubAPI-Headers)
+        $resp = Invoke-WebRequest -Uri $url -Headers $(Get-GitHubAPIHeaders)
         if ($resp.StatusCode -ne 200) {
             Write-Host "Status code $($resp.StatusCode)"
             Pause
@@ -421,20 +426,21 @@ function SystemInformer {
         $content = $resp.Content | ConvertFrom-Json
         foreach ($asset in $content.assets) {
             if ($asset.name.EndsWith("canary-setup.exe")) {
-                Invoke-WebRequest $asset.browser_download_url -OutFile libs/systeminformer.exe
+                Get-FileFromWeb -URL $asset.browser_download_url -File "libs/systeminformer.exe"
                 break
             }
         }
     }
-    .\libs\systeminformer.exe
+    & .\libs\systeminformer.exe
 }
 
-function BamParser {
-    CreateLibsDir
+function Invoke-DownloadBamParser {
     if (-Not(Test-Path -Path libs/BAMParser.exe)) {
-        Get-GithubToken
+        New-LibsDir
+        Get-GitHubToken
+
         $url = "https://api.github.com/repos/spokwn/BAM-parser/releases/latest"
-        $resp = Invoke-WebRequest $url -Headers $(Get-GithubAPI-Headers)
+        $resp = Invoke-WebRequest $url -Headers $(Get-GitHubAPIHeaders)
         if ($resp.StatusCode -ne 200) {
             Write-Host "Status code $($resp.StatusCode)"
             Pause
@@ -443,20 +449,21 @@ function BamParser {
         $content = $resp.Content | ConvertFrom-Json
         foreach ($asset in $content.assets) {
             if ($asset.name.EndsWith(".exe")) {
-                Invoke-WebRequest $asset.browser_download_url -OutFile libs/BAMParser.exe
+                Get-FileFromWeb -URL $asset.browser_download_url -File "libs/BAMParser.exe"
                 break
             }
         }
     }
-    .\libs\BAMParser.exe
+    & .\libs\BAMParser.exe
 }
 
-function JournalTrace {
-    CreateLibsDir
+function Invoke-DownloadJournalTrace {
     if (-Not(Test-Path -Path libs/JournalTrace.exe)) {
-        Get-GithubToken
+        New-LibsDir
+        Get-GitHubToken
+
         $url = "https://api.github.com/repos/spokwn/JournalTrace/releases/latest"
-        $resp = Invoke-WebRequest $url -Headers $(Get-GithubAPI-Headers)
+        $resp = Invoke-WebRequest $url -Headers $(Get-GitHubAPIHeaders)
         if ($resp.StatusCode -ne 200) {
             Write-Host "Status code $($resp.StatusCode)"
             Pause
@@ -465,20 +472,21 @@ function JournalTrace {
         $content = $resp.Content | ConvertFrom-Json
         foreach ($asset in $content.assets) {
             if ($asset.name.EndsWith(".exe")) {
-                Invoke-WebRequest $asset.browser_download_url -OutFile libs/JournalTrace.exe
+                Get-FileFromWeb -URL $asset.browser_download_url -File "libs/JournalTrace.exe"
                 break
             }
         }
     }
-    .\libs\JournalTrace.exe
+    & .\libs\JournalTrace.exe
 }
 
-function PathsParser {
-    CreateLibsDir
+function Invoke-DownloadPathsParser {
     if (-Not(Test-Path -Path libs/PathsParser.exe)) {
-        Get-GithubToken
+        New-LibsDir
+        Get-GitHubToken
+
         $url = "https://api.github.com/repos/spokwn/PathsParser/releases/latest"
-        $resp = Invoke-WebRequest $url -Headers $(Get-GithubAPI-Headers)
+        $resp = Invoke-WebRequest $url -Headers $(Get-GitHubAPIHeaders)
         if ($resp.StatusCode -ne 200) {
             Write-Host "Status code $($resp.StatusCode)"
             Pause
@@ -487,43 +495,45 @@ function PathsParser {
         $content = $resp.Content | ConvertFrom-Json
         foreach ($asset in $content.assets) {
             if ($asset.name.EndsWith(".exe")) {
-                Invoke-WebRequest $asset.browser_download_url -OutFile libs/PathsParser.exe
+                Get-FileFromWeb -URL $asset.browser_download_url -File "libs/PathsParser.exe"
                 break
             }
         }
     }
-    Start-Process .\libs\PathsParser.exe
+    & .\libs\PathsParser.exe
 }
 
-function Services {
+function Show-Services {
     $serviceNames = @(
-        "DPS", "SysMain", "Schedule", "PcaSvc", "EventLog"
+        "DPS", "SysMain", "Schedule", "PcaSvc", "EventLog", "DcomLaunch"
     )
     $results = @()
     $currentDate = Get-Date
     foreach ($serviceName in $serviceNames) {
-        $service = (Get-WmiObject Win32_Service | Where-Object {$_.Name -eq $serviceName})
+        $service = (Get-CimInstance -ClassName Win32_Service | Where-Object {$_.Name -eq $serviceName})
         $serviceProcess = Get-Process -Id $service.ProcessId
         $uptime = $currentDate.Subtract($serviceProcess.StartTime)
         
         $resultObj = New-Object PSObject
         $resultObj | Add-Member Noteproperty Name $service.Name
         $resultObj | Add-Member Noteproperty State $service.State
-        $resultObj | Add-Member Noteproperty Uptime (TimeSpanToString -timespan $uptime)
+        $resultObj | Add-Member Noteproperty Uptime (Format-Timespan -timespan $uptime)
 
         $results += $resultObj
     }
-    Write-Host "System Uptime $(TimeSpanToString -timespan $(SystemUpTime))"
+    Write-Host "System Uptime $(Format-Timespan -timespan $(Get-SystemUpTime))"
     $results | Format-Table -AutoSize
     Pause
 }
 
-function Hayabusa {
-    CreateLibsDir
+function Invoke-DownloadHayabusa {
     if (-Not(Test-Path -Path libs/Hayabusa/Hayabusa.exe)) {
-        Get-GithubToken
+        New-LibsDir
+        Get-GitHubToken
+        Find-7Zip
+
         $url = "https://api.github.com/repos/Yamato-Security/hayabusa/releases/latest"
-        $resp = Invoke-WebRequest $url -Headers $(Get-GithubAPI-Headers)
+        $resp = Invoke-WebRequest $url -Headers $(Get-GitHubAPIHeaders)
         if ($resp.StatusCode -ne 200) {
             Write-Host "Status code $($resp.StatusCode)"
             Pause
@@ -535,59 +545,73 @@ function Hayabusa {
         foreach ($asset in $content.assets) {
             if ($asset.name -imatch $regex) {
                 $fileName =$asset.name
-                Invoke-WebRequest $asset.browser_download_url -OutFile libs/Hayabusa.zip
+                Get-FileFromWeb -URL $asset.browser_download_url -File "libs/Hayabusa.zip"
                 break
             }
         }
-        Find7Zip
         & $global:7zPath x -olibs/Hayabusa libs/Hayabusa.zip > $null
-        Remove-Item -Path "libs/Hayabusa.zip"
-        Rename-Item -Path "libs/Hayabusa/$($fileName.Remove($fileName.Length-4)).exe" -NewName "Hayabusa.exe"
+        Remove-Item -Path "libs/Hayabusa.zip" > $null
+        Rename-Item -Path "libs/Hayabusa/$($fileName.Remove($fileName.Length-4)).exe" -NewName "Hayabusa.exe" > $null
     }
     .\libs\Hayabusa\Hayabusa.exe csv-timeline -l -o hayabusa.csv -U
 }
 
-function FTKImager {
-    CreateLibsDir
+function Invoke-DownloadFTKImager {
     if (-Not(Test-Path -Path libs/FTKImager.exe)) {
+        New-LibsDir
         $url = "https://d1kpmuwb7gvu1i.cloudfront.net/AccessData_FTK_Imager_4.7.1.exe"
-        Invoke-WebRequest $url -OutFile libs/FTKImager.exe
+        Get-FileFromWeb -URL $url -File "libs/FTKImager.exe"
     }
     & .\libs\FTKImager.exe
 }
 
-function USBDriveLog {
-    CreateLibsDir
+function Invoke-DownloadUSBDriveLog {
     if (-Not(Test-Path -Path libs/USBDriveLog.exe)) {
-        Download7Zip
+        New-LibsDir
+        Get-7Zip
         $url = "https://www.nirsoft.net/utils/usbdrivelog.zip"
-        Invoke-WebRequest $url -OutFile libs/USBDriveLog.zip
+        Get-FileFromWeb -URL $url -File "libs/USBDriveLog.zip"
         & $global:7zPath x -olibs/USBDriveLog libs/USBDriveLog.zip
         Remove-Item -Path "libs/USBDriveLog.zip"
     }
     & .\libs\USBDriveLog\USBDriveLog.exe
 }
 
-function DetectItEasy {
-    CreateLibsDir
+function Invoke-DownloadDetectItEasy {
     if (-Not(Test-Path -Path libs/DetectItEasy/die.exe)) {
-        Download7Zip
+        New-LibsDir
+        Get-7Zip
         $url = if ($global:Is64BitOperatingSystem) {"https://github.com/horsicq/DIE-engine/releases/download/3.10/die_win64_portable_3.10_x64.zip"} else {"https://github.com/horsicq/DIE-engine/releases/download/3.10/die_win32_portable_3.10_x86.zip"}
-        Invoke-WebRequest $url -OutFile libs/DetectItEasy.zip
+        Get-FileFromWeb -URL $url -File "libs/DetectItEasy.zip"
         & $global:7zPath x -olibs/DetectItEasy libs/DetectItEasy.zip
         Remove-Item -Path "libs/DetectItEasy.zip"
     }
     & .\libs\DetectItEasy\die.exe
 }
 
-function Cleanup {
+$global:BstringsPath = ""
+function Invoke-DownloadBstrings {
+    if (-Not(Test-Path -Path libs/bstrings/bstrings.exe)) {
+        New-LibsDir
+        Get-7Zip
+        
+        $url = "https://download.ericzimmermanstools.com/net9/bstrings.zip"
+        Get-FileFromWeb -URL $url -File "libs/bstrings.zip"
+        & $global:7zPath x -olibs/bstrings libs/bstrings.zip
+        Remove-Item -Path "libs/bstrings.zip"
+
+        $global:BstringsPath = "libs/bstrings/bstrings.exe"
+    }
+}
+
+function Invoke-Cleanup {
     Remove-Item -Path libs -Recurse
 }
 
 while (1) {
     Clear-Host
     Write-Host @"
-- everything: search everything
+- evr: search everything
 - alt: to check for alts
 - wpv: WinPrefetchView
 - sysinf: System Informer
@@ -599,6 +623,8 @@ while (1) {
 - ftkimg: FTKImager
 - usbdl: USBDriveLog
 - die: Detect-It-Easy
+- bstr: bstrings
+
 - cleanup: to cleanup after screenshare
 - exit: to exit
 "@
@@ -609,34 +635,36 @@ while (1) {
         if ($userInput.Equals("exit")) {
             break
         } elseif ($userInput.Equals("cleanup")) {
-            Cleanup
-        } elseif ($userInput.Equals("everything")) {
-            Everything
+            Invoke-Cleanup
+        } elseif ($userInput.Equals("evr")) {
+            Invoke-DownloadSearchEverything
         } elseif ($userInput.Equals("alt")) {
-            CheckAlts
+            Invoke-AltCheck
         } elseif ($userInput.Equals("wpv")) { 
-            WinPrefetchView
+            Invoke-DownloadWinPrefetchView
         } elseif ($userInput.Equals("sysinf")) {
-            SystemInformer
+            Invoke-DownloadSystemInformer
         } elseif ($userInput.Equals("bam")) {
-            BamParser
+            Invoke-DownloadBamParser
         } elseif ($userInput.Equals("jrnl")) {
-            JournalTrace
+            Invoke-DownloadJournalTrace
         } elseif ($userInput.Equals("pathsparser")) {
-            PathsParser
+            Invoke-DownloadPathsParser
         } elseif ($userInput.Equals("services")) {
-            Services
+            Show-Services
         } elseif ($userInput.Equals("hybs")) {
-            Hayabusa
+            Invoke-DownloadHayabusa
         } elseif ($userInput.Equals("ftkimg")) {
-            FTKImager
+            Invoke-DownloadFTKImager
         } elseif ($userInput.Equals("usbdl")) {
-            USBDriveLog
+            Invoke-DownloadUSBDriveLog
         } elseif ($userInput.Equals("die")) {
-            DetectItEasy
+            Invoke-DownloadDetectItEasy
+        } elseif ($userInput.Equals("bstr")) {
+            Invoke-DownloadBstrings
         } else {
             Write-Host "Invalid option..."
-            Start-Sleep -s 1
+            Pause
         }   
     } catch {
         $_
