@@ -553,7 +553,11 @@ function Invoke-DownloadHayabusa {
         Remove-Item -Path "libs/Hayabusa.zip" > $null
         Rename-Item -Path "libs/Hayabusa/$($fileName.Remove($fileName.Length-4)).exe" -NewName "Hayabusa.exe" > $null
     }
-    .\libs\Hayabusa\Hayabusa.exe csv-timeline -l -o hayabusa.csv -U
+    Remove-Item -Path hayabusa.csv > $null
+    .\libs\Hayabusa\Hayabusa.exe csv-timeline -l -o hayabusa.csv -U -A -D -n -u -w
+
+    Invoke-DownloadTimelimeExplorer
+    & .\libs\TimelineExplorer\TimelineExplorer.exe hayabusa.csv
 }
 
 function Invoke-DownloadFTKImager {
@@ -604,6 +608,21 @@ function Invoke-DownloadBstrings {
     }
 }
 
+$global:TimelineExplorerPath = ""
+function Invoke-DownloadTimelimeExplorer {
+    if (-Not(Test-Path -Path libs/TimelineExplorer/TimelineExplorer.exe)) {
+        New-LibsDir
+        Get-7Zip
+        
+        $url = "https://download.ericzimmermanstools.com/net9/TimelineExplorer.zip"
+        Get-FileFromWeb -URL $url -File "libs/TimelineExplorer.zip"
+        & $global:7zPath x -olibs libs/TimelineExplorer.zip
+        Remove-Item -Path "libs/TimelineExplorer.zip"
+
+        $global:TimelineExplorerPath = "libs/TimelineExplorer/TimelineExplorer.exe"
+    }
+}
+
 function Invoke-Cleanup {
     Remove-Item -Path libs -Recurse
 }
@@ -624,6 +643,7 @@ while (1) {
 - usbdl: USBDriveLog
 - die: Detect-It-Easy
 - bstr: bstrings
+- tlex: Timeline Explorer
 
 - cleanup: to cleanup after screenshare
 - exit: to exit
@@ -662,6 +682,8 @@ while (1) {
             Invoke-DownloadDetectItEasy
         } elseif ($userInput.Equals("bstr")) {
             Invoke-DownloadBstrings
+        } elseif ($userInput.Equals("tlex")) {
+            Invoke-DownloadTimelimeExplorer
         } else {
             Write-Host "Invalid option..."
             Pause
