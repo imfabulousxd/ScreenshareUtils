@@ -32,9 +32,7 @@ Start-Sleep -s 3
 
 Clear-Host
 
-$global:Is64BitOperatingSystem = [System.Environment]::Is64BitOperatingSystem
-
-function New-LibsDir {
+function New-LibsDirectory {
     if (-Not(Test-Path -Path libs)) {
         New-Item -Name "libs" -ItemType "directory" > $null
     }
@@ -183,94 +181,107 @@ function Get-FileFromWeb { # Credits: https://gist.github.com/ChrisStro/37444dd0
     }
 }
 
-function Invoke-DownloadSearchEverything {
-    if (-Not(Test-Path -Path libs/Everything.exe)) {
-        New-LibsDir
+function Get-SearchEverythingInstaller {
+    try {
+        $EverythingInstallerPath = Resolve-Path -Path "libs/Everything.exe" -ErrorAction Stop
+        Return $EverythingInstallerPath
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        New-LibsDirectory
 
-        $url = if ($global:Is64BitOperatingSystem) {"https://www.voidtools.com/Everything-1.4.1.1026.x64-Setup.exe"} else {"https://www.voidtools.com/Everything-1.4.1.1026.x86-Setup.exe"}
+        $url = if ([System.Environment]::Is64BitOperatingSystem) {"https://www.voidtools.com/Everything-1.4.1.1026.x64-Setup.exe"} else {"https://www.voidtools.com/Everything-1.4.1.1026.x86-Setup.exe"}
         Get-FileFromWeb -URL $url -File "libs/Everything.exe"
+
+        Return Get-SearchEverythingInstaller
     }
-    & .\libs\Everything.exe
 }
 
-function Invoke-DownloadSearchEverythingCLI {
-    if (-Not(Test-Path -Path libs/ES)) {
-        New-LibsDir
+function Start-SearchEverythingInstaller {
+    Start-Process (Get-SearchEverythingInstaller).Path
+}
 
-        $url = if ($global:Is64BitOperatingSystem) {"https://www.voidtools.com/ES-1.1.0.27.x64.zip"} else {"https://www.voidtools.com/ES-1.1.0.27.x86.zip"}
+function Get-SearchEverythingCLI {
+    try {
+        $EverythingCLIPath = Resolve-Path -Path "libs/EverythingCLI/es.exe" -ErrorAction Stop
+        while ((& $EverythingCLIPath.Path -get-everything-version).StartsWith("Error 8")) {
+            Write-Host "Please make sure Search Everything is running..."
+            Pause
+        }
+        Return $EverythingCLIPath
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        New-LibsDirectory
+
+        $url = if ([System.Environment]::Is64BitOperatingSystem) {"https://www.voidtools.com/ES-1.1.0.27.x64.zip"} else {"https://www.voidtools.com/ES-1.1.0.27.x86.zip"}
         Get-FileFromWeb -URL $url -File "libs/ES.Zip"
-        Expand-Archive -DestinationPath "libs/ES" -Path "libs/ES.Zip" > $null
+
+        Expand-Archive -DestinationPath "libs/EverythingCLI" -Path "libs/ES.Zip" > $null
         Remove-Item -Path "libs/ES.zip" > $null
+
+        Return Get-SearchEverythingCLI
     }
 }
 
-$global:7zPath = ""
-function Get-7Zip {
-    if ($global:7zPath.Length -eq 0) {
-        Invoke-DownloadSearchEverythingCLI
-
-        $global:7zPath = .\libs\ES\es.exe "Program Files\7-Zip\7z.exe"
-        if ($global:7zPath.Length -eq 0) {
-            Invoke-Download7Zip
-            Get-7Zip
-        }
-        $global:7zPath = $global:7zPath.Split("`r`n")[0]
-    }
-}
-
-$global:GitHubToken = ""
-$global:GitHubTokenAsked = $false
-function Get-GitHubToken {
-    if ($global:GitHubTokenAsked) {
-        Return
-    }
-    $global:GitHubToken = Read-Host "Please enter your GitHub token"
-    $global:GitHubTokenAsked = $true
-    Clear-Host
-}
-
-function Get-GitHubAPIHeaders {
-    if ($global:GitHubToken.Length -eq 0) {
-        return @{}
-    } else {
-        return @{
-            "Authorization"= "Bearer $global:GitHubToken"
-        }
-    }
-}
-
-function Invoke-Download7Zip {
-    if (-Not(Test-Path -Path libs/7z.exe)) {
-        New-LibsDir
-        Get-GitHubToken
+function Get-7ZipInstaller {
+    try {
+        $7ZipInstallerPath = Resolve-Path -Path "7-Zip/7z.exe" -ErrorAction Stop
+        Return $7ZipInstallerPath
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        New-LibsDirectory
         
-        Write-Host "Installing 7zip..."
         $url = "https://api.github.com/repos/ip7z/7zip/releases/latest"
-        $resp = Invoke-WebRequest $url -Headers $(Get-GitHubAPIHeaders)
+        $resp = Invoke-WebRequest $url -Headers $(Get-GitHubAPIHeadersDict)
         if ($resp.StatusCode -ne 200) {
             Write-Host "Status code $($resp.StatusCode)"
             Pause
             Return
         }
         $content = $resp.Content | ConvertFrom-Json
-        $regex = if ($global:Is64BitOperatingSystem) {"7z\d+-x64\.exe"} else {"7z\d+\.exe"}
+        $regex = if ([System.Environment]::Is64BitOperatingSystem) {"7z\d+-x64\.exe"} else {"7z\d+\.exe"}
         foreach ($asset in $content.assets) {
             if ($asset.name -imatch $regex) {
                 Get-FileFromWeb -URL $asset.browser_download_url -File "libs/7z.exe"
                 break
             }
         }
+
+        Return Get-7ZipInstaller
     }
-    & .\libs\7z.exe > $null
-    Write-Host "After installing, Press enter..."
-    Pause
+}
+
+function Get-7Zip {
+    $7ZipRawPath = & (Get-SearchEverythingCLI).Path "Program Files\7-Zip\7z.exe"
+    if ($7ZipRawPath.Length -eq 0) {
+        Get-7ZipInstaller
+        Write-Host "Please install 7-zip"
+        Pause
+    }
+    Return Resolve-Path -Path $7ZipRawPath
+}
+
+$script:GitHubToken = ""
+$script:GitHubTokenAsked = $false
+function Get-GitHubToken {
+    if ($script:GitHubTokenAsked) {
+        Return
+    }
+    $script:GitHubToken = Read-Host "Please enter your GitHub token"
+    $script:GitHubTokenAsked = $true
     Clear-Host
-    Find-7Zip
+}
+
+function Get-GitHubAPIHeadersDict {
+    Get-GitHubToken
+    if ($script:GitHubToken.Length -eq 0) {
+        return @{}
+    } else {
+        return @{
+            "Authorization"= "Bearer $script:GitHubToken"
+        }
+    }
 }
 
 function Get-SystemUpTime {
     $os = Get-CimInstance -ClassName Win32_OperatingSystem
-    Return (Get-Date).Subtract($os.ConvertToDateTime($os.LastBootUpTime))
+    Return (Get-Date).Subtract($os.LastBootUpTime)
 }
 
 function Format-Timespan {
@@ -281,9 +292,124 @@ function Format-Timespan {
 }
 
 function Invoke-AltCheck {
-    Get-7Zip
-    Invoke-DownloadSearchEverythingCLI
-    $mcDirs = & .\libs\ES\es.exe folder:regex:^\.minecraft$
+    $7ZipPath = Get-7Zip
+    $mcDirs = & (Get-SearchEverythingCLI) folder:regex:^\.minecraft$
+    $totalData = 0
+    $logFiles = @()
+    $usercacheFiles = @()
+    $usernamecacheFiles = @()
+    $archivedLogFiles = @()
+    foreach ($mcDir in $mcDirs) {
+        $mcDir = $mcDir.Replace("`"", "")
+
+        foreach($logFile in Get-ChildItem -Path "$mcDir\*.log" -Recurse -Force) {
+            $totalData += $logFile.Length
+            $logFiles += $logFile
+        }
+        
+        foreach ($usercacheFile in Get-ChildItem -Path "$mcDir\usercache.json" -Recurse -Force) {
+            $totalData += $usercacheFile.Length
+            $usercacheFiles += $usercacheFile
+        }
+
+        foreach ($usernamecacheFile in Get-ChildItem -Path "$mcDir\usernamecache.json" -Recurse -Force) {
+            $totalData += $usernamecacheFile.Length
+            $usernamecacheFiles += $usernamecacheFile
+        }
+
+        foreach ($archivedLogFile in Get-ChildItem -Path "$mcDir\*.log.gz" -Recurse -Force) {
+            $totalData += $archivedLogFile.Length
+            $archivedLogFiles += $archivedLogFile
+        }
+    }
+
+    $data = 0
+    $progressID = 1
+    $results = @()
+    foreach ($logFile in $logFiles) {
+        $progress = [int]($data / $totalData * 100)
+        Write-Progress -Activity "Search in Progress" -Status "$progress% Complete:" -PercentComplete $progress -Id $progressID
+        $data += $logFile.Length
+
+        foreach ($stringFound in [System.IO.File]::ReadAllText("$logFile") | & findstr /i /x "setting user: ([a-z0-9_]+)") {
+            $match = [regex]::Matches($stringFound, "setting user: ([a-z0-9_]+)", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            $stringDetails = New-Object PSObject
+            $stringDetails | Add-Member Noteproperty FileName $logfile.Fullname
+            $stringDetails | Add-Member Noteproperty IGN $match.Groups.Item(1).Value
+            $stringDetails | Add-Member Noteproperty UUID "NULL"
+            $results += $stringDetails
+            break;
+        }
+        Write-Debug "Processed $($logFile.Fullname)"
+    }
+
+    foreach ($usercacheFile in $usercacheFiles) {
+        $progress = [int]($data / $totalData * 100)
+        Write-Progress -Activity "Search in Progress" -Status "$progress% Complete:" -PercentComplete $progress -Id $progressID
+        $data += $usercacheFile.Length
+
+        foreach ($stringFound in Get-Content $usercacheFile | Select-String -Pattern "\{\s*`"name`"\s*:\s*`"([a-z0-9_]+)`"\s*,\s*`"uuid`"\s*:\s*`"([^`"]+)`"" -AllMatches) {
+            foreach ($match in $stringFound.Matches) {
+                $stringDetails = New-Object PSObject
+                $stringDetails | Add-Member Noteproperty FileName $usercacheFile.Fullname
+                $stringDetails | Add-Member Noteproperty IGN $match.Groups.Item(1).Value
+                $stringDetails | Add-Member Noteproperty UUID $match.Groups.Item(2).Value
+                $results += $stringDetails
+            }
+        }
+
+        Write-Debug "Processed $($usercacheFile.Fullname)"
+    }
+
+    foreach ($usernamecacheFile in $usernamecacheFiles) {
+        $progress = [int]($data / $totalData * 100)
+        Write-Progress -Activity "Search in Progress" -Status "$progress% Complete:" -PercentComplete $progress -Id $progressID
+        $data += $usernamecacheFile.Length
+
+        foreach ($stringFound in Get-Content $usernamecacheFile | Select-String -Pattern "`"([^`"]+)`"\s*:\s*`"([a-z0-9_]+)`"" -AllMatches) {
+            foreach ($match in $stringFound.Matches) {
+                $stringDetails = New-Object PSObject
+                $stringDetails | Add-Member Noteproperty FileName $usernamecacheFile.Fullname
+                $stringDetails | Add-Member Noteproperty IGN $match.Groups.Item(2).Value
+                $stringDetails | Add-Member Noteproperty UUID $match.Groups.Item(1).Value
+                $results += $stringDetails
+            }
+        }
+
+        Write-Debug "Processed $($usernamecacheFile.Fullname)"
+    }
+
+    foreach ($archivedLogFile in $archivedLogFiles) {
+        $progress = [int]($data / $totalData * 100)
+        Write-Progress -Activity "Search in Progress" -Status "$progress% Complete:" -PercentComplete $progress -Id $progressID
+        $data += $archivedLogFile.Length
+
+        & $7ZipPath e -otemp "$archivedLogFile" > $null
+
+        foreach ($logFile in Get-ChildItem -Path "temp\*.log" -Recurse -Force) {
+            foreach ($stringFound in Get-Content $logFile | Select-String -Pattern "setting user: ([a-z0-9_]+)" -AllMatches) {
+                foreach ($match in $stringFound.Matches) {
+                    $stringDetails = New-Object PSObject
+                    $stringDetails | Add-Member Noteproperty FileName $archivedLogFile.Fullname
+                    $stringDetails | Add-Member Noteproperty IGN $match.Groups.Item(1).Value
+                    $stringDetails | Add-Member Noteproperty UUID "NULL"
+                    $results += $stringDetails
+                }
+                break;
+            }
+        }
+
+        Remove-Item "temp" -Recurse > $null
+
+        Write-Debug "Processed $($archivedLogFile.Fullname)"
+    }
+
+    $results | Out-GridView -PassThru -Title 'Results'
+}
+
+function Invoke-AltCheckBACKUP {
+    $7ZipPath = Get-7Zip
+    $mcDirs = & (Get-SearchEverythingCLI) folder:regex:^\.minecraft$
     $totalData = 0
     $logFiles = @()
     $usercacheFiles = @()
@@ -375,7 +501,7 @@ function Invoke-AltCheck {
         Write-Progress -Activity "Search in Progress" -Status "$progress% Complete:" -PercentComplete $progress -Id $progressID
         $data += $archivedLogFile.Length
 
-        & $global:7zPath e -otemp "$archivedLogFile" > $null
+        & $7ZipPath e -otemp "$archivedLogFile" > $null
 
         foreach ($logFile in Get-ChildItem -Path "temp\*.log" -Recurse -Force) {
             foreach ($stringFound in Get-Content $logFile | Select-String -Pattern "setting user: ([a-z0-9_]+)" -AllMatches) {
@@ -390,7 +516,7 @@ function Invoke-AltCheck {
             }
         }
 
-        Remove-Item "temp" -Recurse
+        Remove-Item "temp" -Recurse > $null
 
         Write-Debug "Processed $($archivedLogFile.Fullname)"
     }
@@ -398,26 +524,30 @@ function Invoke-AltCheck {
     $results | Out-GridView -PassThru -Title 'Results'
 }
 
-function Invoke-DownloadWinPrefetchView {
-    if (-Not(Test-Path -Path libs/wpv)) {
-        New-LibsDir
-        Get-7Zip
+function Get-WinPrefetchView {
+    try {
+        Return Resolve-Path -Path "libs/wpv/WinPrefetchView.exe" -ErrorAction Stop
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        New-LibsDirectory
 
-        $url = if ($global:Is64BitOperatingSystem) {"https://www.nirsoft.net/utils/winprefetchview-x64.zip"} else {"https://www.nirsoft.net/utils/winprefetchview.zip"}
+        $url = if ([System.Environment]::Is64BitOperatingSystem) {"https://www.nirsoft.net/utils/winprefetchview-x64.zip"} else {"https://www.nirsoft.net/utils/winprefetchview.zip"}
         Get-FileFromWeb -URL $url -File "libs/wpv.zip"
-        & $global:7zPath e -olibs/wpv libs/wpv.zip > $null
+
+        Expand-Archive -Path "libs/wpv.zip" -DestinationPath "libs/wpv" > $null
         Remove-Item -Path "libs/wpv.zip" > $null
+
+        Return Get-WinPrefetchView
     }
-    & .\libs\wpv\WinPrefetchView.exe
 }
 
-function Invoke-DownloadSystemInformer {
-    if (-Not(Test-Path -Path libs/systeminformer.exe)) {
-        New-LibsDir
-        Get-GitHubToken
+function Get-SystemInformerInstaller {
+    try {
+        Return Resolve-Path -Path "libs/systeminformer.exe" -ErrorAction Stop
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        New-LibsDirectory
 
         $url = "https://api.github.com/repos/winsiderss/si-builds/releases/latest"
-        $resp = Invoke-WebRequest -Uri $url -Headers $(Get-GitHubAPIHeaders)
+        $resp = Invoke-WebRequest -Uri $url -Headers $(Get-GitHubAPIHeadersDict)
         if ($resp.StatusCode -ne 200) {
             Write-Host "Status code $($resp.StatusCode)"
             Pause
@@ -430,17 +560,19 @@ function Invoke-DownloadSystemInformer {
                 break
             }
         }
+        
+        Return Get-SystemInformerInstaller
     }
-    & .\libs\systeminformer.exe
 }
 
-function Invoke-DownloadBamParser {
-    if (-Not(Test-Path -Path libs/BAMParser.exe)) {
-        New-LibsDir
-        Get-GitHubToken
+function Get-BamParser {
+    try {
+        Return Resolve-Path -Path "libs/BAMParser.exe" -ErrorAction Stop
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        New-LibsDirectory
 
         $url = "https://api.github.com/repos/spokwn/BAM-parser/releases/latest"
-        $resp = Invoke-WebRequest $url -Headers $(Get-GitHubAPIHeaders)
+        $resp = Invoke-WebRequest $url -Headers $(Get-GitHubAPIHeadersDict)
         if ($resp.StatusCode -ne 200) {
             Write-Host "Status code $($resp.StatusCode)"
             Pause
@@ -453,17 +585,19 @@ function Invoke-DownloadBamParser {
                 break
             }
         }
+
+        Return Get-BamParser
     }
-    & .\libs\BAMParser.exe
 }
 
-function Invoke-DownloadJournalTrace {
-    if (-Not(Test-Path -Path libs/JournalTrace.exe)) {
-        New-LibsDir
-        Get-GitHubToken
+function Get-JournalTrace {
+    try {
+        Return Resolve-Path -Path "libs/JournalTrace.exe" -ErrorAction Stop
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        New-LibsDirectory
 
         $url = "https://api.github.com/repos/spokwn/JournalTrace/releases/latest"
-        $resp = Invoke-WebRequest $url -Headers $(Get-GitHubAPIHeaders)
+        $resp = Invoke-WebRequest $url -Headers $(Get-GitHubAPIHeadersDict)
         if ($resp.StatusCode -ne 200) {
             Write-Host "Status code $($resp.StatusCode)"
             Pause
@@ -476,17 +610,19 @@ function Invoke-DownloadJournalTrace {
                 break
             }
         }
+
+        Return Get-JournalTrace
     }
-    & .\libs\JournalTrace.exe
 }
 
-function Invoke-DownloadPathsParser {
-    if (-Not(Test-Path -Path libs/PathsParser.exe)) {
-        New-LibsDir
-        Get-GitHubToken
+function Get-PathsParser {
+    try {
+        Return Resolve-Path -Path "libs/PathsParser.exe" -ErrorAction Stop
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        New-LibsDirectory
 
         $url = "https://api.github.com/repos/spokwn/PathsParser/releases/latest"
-        $resp = Invoke-WebRequest $url -Headers $(Get-GitHubAPIHeaders)
+        $resp = Invoke-WebRequest $url -Headers $(Get-GitHubAPIHeadersDict)
         if ($resp.StatusCode -ne 200) {
             Write-Host "Status code $($resp.StatusCode)"
             Pause
@@ -499,11 +635,12 @@ function Invoke-DownloadPathsParser {
                 break
             }
         }
+
+        Return Get-PathsParser
     }
-    & .\libs\PathsParser.exe
 }
 
-function Show-Services {
+function Show-ServicesState {
     $serviceNames = @(
         "DPS", "SysMain", "Schedule", "PcaSvc", "EventLog", "DcomLaunch"
     )
@@ -526,14 +663,14 @@ function Show-Services {
     Pause
 }
 
-function Invoke-DownloadHayabusa {
-    if (-Not(Test-Path -Path libs/Hayabusa/Hayabusa.exe)) {
-        New-LibsDir
-        Get-GitHubToken
-        Find-7Zip
+function Get-Hayabusa {
+    try {
+        Return Resolve-Path -Path "libs/Hayabusa/Hayabusa.exe" -ErrorAction Stop
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        New-LibsDirectory
 
         $url = "https://api.github.com/repos/Yamato-Security/hayabusa/releases/latest"
-        $resp = Invoke-WebRequest $url -Headers $(Get-GitHubAPIHeaders)
+        $resp = Invoke-WebRequest $url -Headers $(Get-GitHubAPIHeadersDict)
         if ($resp.StatusCode -ne 200) {
             Write-Host "Status code $($resp.StatusCode)"
             Pause
@@ -541,7 +678,7 @@ function Invoke-DownloadHayabusa {
         }
         $content = $resp.Content | ConvertFrom-Json
         $fileName = ""
-        $regex = if ($global:Is64BitOperatingSystem) {".*win-x64\.zip"} else {".*win-x86\.zip"}
+        $regex = if ([System.Environment]::Is64BitOperatingSystem) {".*win-x64\.zip"} else {".*win-x86\.zip"}
         foreach ($asset in $content.assets) {
             if ($asset.name -imatch $regex) {
                 $fileName =$asset.name
@@ -549,78 +686,169 @@ function Invoke-DownloadHayabusa {
                 break
             }
         }
-        & $global:7zPath x -olibs/Hayabusa libs/Hayabusa.zip > $null
+        Expand-Archive -DestinationPath "libs/Hayabusa" -Path "libs/Hayabusa.zip" > $null
         Remove-Item -Path "libs/Hayabusa.zip" > $null
         Rename-Item -Path "libs/Hayabusa/$($fileName.Remove($fileName.Length-4)).exe" -NewName "Hayabusa.exe" > $null
-    }
-    Remove-Item -Path hayabusa.csv > $null
-    .\libs\Hayabusa\Hayabusa.exe csv-timeline -l -o hayabusa.csv -U -A -D -n -u -w
 
-    Invoke-DownloadTimelimeExplorer
-    & .\libs\TimelineExplorer\TimelineExplorer.exe hayabusa.csv
+        Return Get-Hayabusa
+    }
+    # Remove-Item -Path hayabusa.csv > $null
+    # .\libs\Hayabusa\Hayabusa.exe csv-timeline -l -o hayabusa.csv -U -A -D -n -u -w
+
+    # Invoke-DownloadTimelimeExplorer
+    # & .\libs\TimelineExplorer\TimelineExplorer.exe hayabusa.csv
 }
 
-function Invoke-DownloadFTKImager {
-    if (-Not(Test-Path -Path libs/FTKImager.exe)) {
-        New-LibsDir
+function Get-FTKImager {
+    try {
+        Return Resolve-Path -Path "libs/FTKImager.exe" -ErrorAction Stop
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        New-LibsDirectory
+
         $url = "https://d1kpmuwb7gvu1i.cloudfront.net/AccessData_FTK_Imager_4.7.1.exe"
         Get-FileFromWeb -URL $url -File "libs/FTKImager.exe"
+
+        Return Get-FTKImager
     }
-    & .\libs\FTKImager.exe
 }
 
-function Invoke-DownloadUSBDriveLog {
-    if (-Not(Test-Path -Path libs/USBDriveLog.exe)) {
-        New-LibsDir
-        Get-7Zip
+function Get-USBDriveLog {
+    try {
+        Return Resolve-Path -Path "libs/USBDriveLog/USBDriveLog.exe" -ErrorAction Stop
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        New-LibsDirectory
+        
         $url = "https://www.nirsoft.net/utils/usbdrivelog.zip"
         Get-FileFromWeb -URL $url -File "libs/USBDriveLog.zip"
-        & $global:7zPath x -olibs/USBDriveLog libs/USBDriveLog.zip
+
+        Expand-Archive -DestinationPath "libs/USBDriveLog" -Path "libs/USBDriveLog.zip"
         Remove-Item -Path "libs/USBDriveLog.zip"
+
+        Return Get-USBDriveLog
     }
-    & .\libs\USBDriveLog\USBDriveLog.exe
 }
 
-function Invoke-DownloadDetectItEasy {
-    if (-Not(Test-Path -Path libs/DetectItEasy/die.exe)) {
-        New-LibsDir
-        Get-7Zip
-        $url = if ($global:Is64BitOperatingSystem) {"https://github.com/horsicq/DIE-engine/releases/download/3.10/die_win64_portable_3.10_x64.zip"} else {"https://github.com/horsicq/DIE-engine/releases/download/3.10/die_win32_portable_3.10_x86.zip"}
+function Get-DetectItEasy {
+    try {
+        Return Resolve-Path -Path "libs/DetectItEasy/die.exe" -ErrorAction Stop
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        New-LibsDirectory
+        
+        $url = if ([System.Environment]::Is64BitOperatingSystem) {"https://github.com/horsicq/DIE-engine/releases/download/3.10/die_win64_portable_3.10_x64.zip"} else {"https://github.com/horsicq/DIE-engine/releases/download/3.10/die_win32_portable_3.10_x86.zip"}
         Get-FileFromWeb -URL $url -File "libs/DetectItEasy.zip"
-        & $global:7zPath x -olibs/DetectItEasy libs/DetectItEasy.zip
+
+        Expand-Archive -DestinationPath "libs/DetectItEasy" -Path "libs/DetectItEasy.zip"
         Remove-Item -Path "libs/DetectItEasy.zip"
+
+        Return Get-DetectItEasy
     }
-    & .\libs\DetectItEasy\die.exe
 }
 
-$global:BstringsPath = ""
-function Invoke-DownloadBstrings {
-    if (-Not(Test-Path -Path libs/bstrings/bstrings.exe)) {
-        New-LibsDir
-        Get-7Zip
+function Get-AlternateStreamView {
+    try {
+        Return Resolve-Path -Path "libs/AlternateStreamView/AlternateStreamView.exe" -ErrorAction Stop
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        New-LibsDirectory
+        
+        $url = if ([System.Environment]::Is64BitOperatingSystem) {"https://www.nirsoft.net/utils/alternatestreamview-x64.zip"} else {"https://www.nirsoft.net/utils/alternatestreamview.zip"}
+        Get-FileFromWeb -URL $url -File "libs/AlternateStreamView.zip"
+
+        Expand-Archive -DestinationPath "libs/AlternateStreamView" -Path "libs/AlternateStreamView.zip"
+        Remove-Item -Path "libs/AlternateStreamView.zip"
+
+        Return Get-AlternateStreamView
+    }
+}
+
+function Get-Bstrings {
+    try {
+        Return Resolve-Path -Path "libs/bstrings/bstrings.exe" -ErrorAction Stop
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        New-LibsDirectory
         
         $url = "https://download.ericzimmermanstools.com/net9/bstrings.zip"
         Get-FileFromWeb -URL $url -File "libs/bstrings.zip"
-        & $global:7zPath x -olibs/bstrings libs/bstrings.zip
+
+        Expand-Archive -DestinationPath "libs/bstrings" -Path "libs/bstrings.zip"
         Remove-Item -Path "libs/bstrings.zip"
 
-        $global:BstringsPath = "libs/bstrings/bstrings.exe"
+        Return Get-Bstrings
     }
 }
 
-$global:TimelineExplorerPath = ""
-function Invoke-DownloadTimelimeExplorer {
-    if (-Not(Test-Path -Path libs/TimelineExplorer/TimelineExplorer.exe)) {
-        New-LibsDir
-        Get-7Zip
+function Get-TimelimeExplorer {
+    try {
+        Return Resolve-Path -Path "libs/TimelineExplorer/TimelineExplorer.exe" -ErrorAction Stop
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        New-LibsDirectory
         
         $url = "https://download.ericzimmermanstools.com/net9/TimelineExplorer.zip"
         Get-FileFromWeb -URL $url -File "libs/TimelineExplorer.zip"
-        & $global:7zPath x -olibs libs/TimelineExplorer.zip
-        Remove-Item -Path "libs/TimelineExplorer.zip"
 
-        $global:TimelineExplorerPath = "libs/TimelineExplorer/TimelineExplorer.exe"
+        Expand-Archive -DestinationPath "libs" -Path "libs/TimelineExplorer.zip"
+        Remove-Item -Path "libs/TimelineExplorer.zip"
     }
+}
+
+function Get-Ocean {
+    Start-Process "https://anticheat.ac/download"
+}
+
+function Invoke-SignatureCheck {
+    param (
+        [String] $Path
+    )
+    Remove-Item -Path "libs/paths.txt" -ErrorAction SilentlyContinue
+    Copy-Item -Path $Path -Destination "libs/paths.txt"
+    Start-Process (Get-PathsParser).Path
+}
+
+function Invoke-CsrssSignatureCheck {
+    while (-Not (Test-Path -Path "csrss.exe.bin")) {
+        Write-Host "Please put csrss.exe.bin in the running directory"
+        Pause
+    }
+    Remove-Item -Path "csrss.txt" -ErrorAction SilentlyContinue
+    $Bstrings = Get-Bstrings
+    & $Bstrings.Path -f "csrss.exe.bin" --lr "^[A-Z]:\\.+\.(exe|dll)$" --ro -o "csrss.txt" > $null
+    Invoke-SignatureCheck -Path "csrss.txt"
+}
+
+function Get-HardDiskVolumeNamesDict {
+    $HardDiskVolumeNumbers = @{}
+    foreach ($partition in Get-Partition) {
+        if ($partition.DriveLetter.Length -gt 0) {
+            $HardDiskVolumeNumbers[[string]$partition.PartitionNumber] = $partition.DriveLetter
+        }
+    }
+    Return $HardDiskVolumeNumbers
+}
+
+function Invoke-DPSSignatureCheck {
+    while (-Not (Test-Path -Path "svchost.exe.bin")) {
+        Write-Host "Please put svchost.exe.bin in the running directory"
+        Pause
+    }
+    Remove-Item -Path "dps.txt" -ErrorAction SilentlyContinue
+    $Bstrings = Get-Bstrings
+    & $Bstrings.Path -f "svchost.exe.bin" --lr "^\\device\\harddiskvolume\d+\\.+\.(exe|dll)$" --ro -o "dps.txt" > $null
+
+    $HardDiskVolumeNamesDict = Get-HardDiskVolumeNamesDict
+    
+    $streamWriter = [System.IO.StreamWriter]::new("new_dps.txt", $true, [System.Text.Encoding]::UTF8)
+    foreach ($path in Get-Content -Path "dps.txt") {
+        $match = [regex]::Matches($path, "^\\device\\harddiskvolume(\d+)(.*)", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        $HardDiskVolumeNumber = $match.Groups[1].Value
+        $NewPath = "$($HardDiskVolumeNamesDict[$HardDiskVolumeNumber]):$($match.Groups[2].Value)"
+        if ($NewPath -match "$($env:SystemDrive)\\Windows\\System32\\svchost\.exe") {
+            continue
+        }
+        $streamWriter.WriteLine($NewPath)
+    }
+    $streamWriter.Close()
+    Remove-Item -Path "dps.txt"
+    Rename-Item -Path "new_dps.txt" -NewName "dps.txt"
+    Invoke-SignatureCheck -Path "dps.txt"
 }
 
 function Invoke-Cleanup {
@@ -631,19 +859,23 @@ while (1) {
     Clear-Host
     Write-Host @"
 - evr: search everything
-- alt: to check for alts
 - wpv: WinPrefetchView
 - sysinf: System Informer
 - bam: spokwn's bam parser
 - jrnl: spokwn's JournalTrace
 - pathsparser: spokwn's PathsParser
-- services: see services and their uptime
 - hybs: Hayabusa
 - ftkimg: FTKImager
 - usbdl: USBDriveLog
 - die: Detect-It-Easy
-- bstr: bstrings
 - tlex: Timeline Explorer
+- ocean: ocean scanner
+- asv: AlternateStreamView
+
+- services: see services and their uptime
+- alt: to check for alts
+- csrss: to signature check paths in csrss
+- dps: to signature check paths in dps
 
 - cleanup: to cleanup after screenshare
 - exit: to exit
@@ -652,39 +884,85 @@ while (1) {
 	
     Clear-Host
     try {
-        if ($userInput.Equals("exit")) {
+        if ($userInput.Equals("exit")) 
+        {
             break
-        } elseif ($userInput.Equals("cleanup")) {
+        } 
+        elseif ($userInput.Equals("cleanup")) 
+        {
             Invoke-Cleanup
-        } elseif ($userInput.Equals("evr")) {
-            Invoke-DownloadSearchEverything
-        } elseif ($userInput.Equals("alt")) {
+        } 
+        elseif ($userInput.Equals("evr")) 
+        {
+            Start-Process "$(Get-SearchEverythingInstaller)"
+        } 
+        elseif ($userInput.Equals("alt")) 
+        {
             Invoke-AltCheck
-        } elseif ($userInput.Equals("wpv")) { 
-            Invoke-DownloadWinPrefetchView
-        } elseif ($userInput.Equals("sysinf")) {
-            Invoke-DownloadSystemInformer
-        } elseif ($userInput.Equals("bam")) {
-            Invoke-DownloadBamParser
-        } elseif ($userInput.Equals("jrnl")) {
-            Invoke-DownloadJournalTrace
-        } elseif ($userInput.Equals("pathsparser")) {
-            Invoke-DownloadPathsParser
-        } elseif ($userInput.Equals("services")) {
-            Show-Services
-        } elseif ($userInput.Equals("hybs")) {
-            Invoke-DownloadHayabusa
-        } elseif ($userInput.Equals("ftkimg")) {
-            Invoke-DownloadFTKImager
-        } elseif ($userInput.Equals("usbdl")) {
-            Invoke-DownloadUSBDriveLog
-        } elseif ($userInput.Equals("die")) {
-            Invoke-DownloadDetectItEasy
-        } elseif ($userInput.Equals("bstr")) {
-            Invoke-DownloadBstrings
-        } elseif ($userInput.Equals("tlex")) {
-            Invoke-DownloadTimelimeExplorer
-        } else {
+        } 
+        elseif ($userInput.Equals("wpv")) 
+        { 
+            Start-Process "$(Get-WinPrefetchView)"
+        } 
+        elseif ($userInput.Equals("sysinf")) 
+        {
+            Start-Process "$(Get-SystemInformerInstaller)"
+        } 
+        elseif ($userInput.Equals("bam")) 
+        {
+            Start-Process "$(Get-BamParser)"
+        } 
+        elseif ($userInput.Equals("jrnl")) 
+        {
+            Start-Process "$(Get-JournalTrace)"
+        } 
+        elseif ($userInput.Equals("pathsparser")) 
+        {
+            Start-Process "$(Get-PathsParser)"
+        } 
+        elseif ($userInput.Equals("asv")) 
+        {
+            Start-Process "$(Get-AlternateStreamView)"
+        }
+        elseif ($userInput.Equals("services")) 
+        {
+            Show-ServicesState
+        } 
+        elseif ($userInput.Equals("hybs")) 
+        {
+            Remove-Item -Path hayabusa.csv -ErrorAction SilentlyContinue > $null
+            & (Get-Hayabusa) csv-timeline -l -o hayabusa.csv -U -A -D -n -u -w
+            Start-Process ((Get-TimelimeExplorer).Path) -ArgumentList "hayabusa.csv"
+        } 
+        elseif ($userInput.Equals("ftkimg")) 
+        {
+            Start-Process "$(Get-FTKImager)"
+        } 
+        elseif ($userInput.Equals("usbdl")) 
+        {
+            Start-Process "$(Get-USBDriveLog)"
+        } 
+        elseif ($userInput.Equals("die")) 
+        {
+            Start-Process "$(Get-DetectItEasy)"
+        }
+        elseif ($userInput.Equals("tlex")) 
+        {
+            Start-Process "$(Get-TimelimeExplorer)"
+        } 
+        elseif ($userInput.Equals("ocean")) 
+        {
+            Get-Ocean
+        } 
+        elseif ($userInput.Equals("csrss")) 
+        {
+            Invoke-CsrssSignatureCheck
+        } 
+        elseif ($userInput.Equals("dps")) 
+        {
+            Invoke-DPSSignatureCheck
+        } 
+        else {
             Write-Host "Invalid option..."
             Pause
         }   
